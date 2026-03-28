@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 
 # === CONFIG ===
 API_KEY = "TU_NHI_MANEGA"          # Change this to your custom API key
-LEAKOSINT_TOKEN = "987654321:b42vAQjW"  # Token from /api command in bot
+LEAKOSINT_TOKEN = "8393353246:2MBq29zI"  # Token from /api command in bot
 TARGET_URL = "https://leakosintapi.com/"
 SOURCE_NAME = "@your_father"   # Your name/username
 REQUEST_TIMEOUT = 30
