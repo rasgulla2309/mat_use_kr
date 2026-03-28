@@ -6,23 +6,20 @@ logging.basicConfig(level=logging.INFO)
 
 # === CONFIG ===
 API_KEY = "TU_NHI_MANEGA"
-LEAKOSINT_TOKEN = "8393353246:2MBq29zI"  # ✅ Keep your token
+LEAKOSINT_TOKEN = "8393353246:2MBq29zI"
 TARGET_URL = "https://leakosintapi.com/"
 SOURCE_NAME = "@your_father"
 REQUEST_TIMEOUT = 30
 LIMIT = 100
-
 # ==============
 
 def validate_num(raw):
-    """✅ FIXED: 0-9 all allowed for testing"""
     clean = re.sub(r"[\s-.$      $+]", "", raw)
-    if re.match(r"^\d{10}$", clean):  # ✅ 0-9 ANY 10 digits
+    if re.match(r"^[0-9]\d{9}$", clean):
         return "91" + clean, None
     return None, "Format not supported"
 
 def validate_adhar(raw):
-    """✅ 0-9 exactly 12 digits"""
     clean = re.sub(r"\D", "", raw)
     if re.match(r"^\d{12}$", clean):
         return clean, None
@@ -44,37 +41,23 @@ def estimate_cost():
     return round(0.0002 * (5 + math.sqrt(LIMIT * 1)), 5)
 
 def call_leakosint(query):
-    """✅ FULL ERROR HANDLING - NO CRASH!"""
     data = {"token": LEAKOSINT_TOKEN, "request": query, "limit": LIMIT, "lang": "en"}
-    
-    try:
-        resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        result = resp.json()
-        
-        # ✅ Safe error checking
-        if "Error code" in result or result.get("ok") == False:
-            logging.warning(f"Leakosint error: {result}")
-            return {"List": {}}  # Empty safe response
-            
-        return result
-        
-    except Exception as e:
-        logging.error(f"Leakosint failed: {e}")
-        return {"List": {}}  # ✅ NEVER CRASH
+    resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
+    return resp.json()
 
 def build_results(upstream, search_type, query):
     """Filter results based on search type - NO CROSS RESULTS"""
-    if "List" not in upstream:
-        return {}
-        
     results = {}
+    
+    if "List" not in upstream:
+        return results
+        
     query_lower = str(query).lower()
     
     for db_name, db_data in upstream["List"].items():
         filtered_data = []
         
-        # Database level filtering
+        # Database level filtering (skip irrelevant DBs)
         if search_type == "num" and any(skip in db_name.lower() for skip in ["email", "gmail", "aadhar"]):
             continue
         if search_type == "adhar" and any(skip in db_name.lower() for skip in ["phone", "mobile", "email", "gmail"]):
@@ -87,8 +70,8 @@ def build_results(upstream, search_type, query):
             record_str = str(record).lower()
             
             if search_type == "num":
-                if (re.search(r'\b91\d{10}\b', record_str) or 
-                    re.search(r'\b\d{10}\b', record_str) or
+                if (re.search(r'\b91[6-9]\d{9}\b', record_str) or 
+                    re.search(r'\b[6-9]\d{9}\b', record_str) or
                     query_lower in record_str):
                     filtered_data.append(record)
                     
@@ -117,79 +100,89 @@ def before_request():
 
 @app.route("/fetch", methods=["GET"])
 def fetch():
-    try:  # ✅ FULL TRY-CATCH
-        key = request.args.get("key", "").strip()
-        if not key or key != API_KEY:
-            return make_json_response({"ok": False, "error": "Invalid API key"}, 401)
-        
-        num = request.args.get("num", "").strip()
-        adhar = request.args.get("adhar", "").strip()
-        email = request.args.get("email", "").strip()
-        
-        provided = [p for p in [num, adhar, email] if p]
-        if len(provided) == 0:
-            return make_json_response({"ok": False, "error": "Provide num OR adhar OR email"}, 400)
-        if len(provided) > 1:
-            return make_json_response({"ok": False, "error": "Only one parameter"}, 400)
-        
-        # ✅ FIXED VALIDATION
-        if num:
-            query, err = validate_num(num)
-            search_type = "num"
-        elif adhar:
-            query, err = validate_adhar(adhar)
-            search_type = "adhar"
-        else:
-            query, err = validate_email(email)
-            search_type = "email"
-        
-        if err:
-            return make_json_response({"ok": False, "error": err}, 400)
-        
-        g.search_type = search_type
-        g.query = query
-        
-        cost_est = estimate_cost()
-        logging.info(f"[FETCH] {search_type}='{provided[0]}'→'{query}' ${cost_est}")
-        
-        upstream = call_leakosint(query)  # ✅ Safe call
-        results = build_results(upstream, search_type, query)
-        
-        if not results:
-            return make_json_response({
-                "ok": True,
-                "type": search_type,
-                "query_raw": provided[0],
-                "query_normalized": query,
-                "message": "not found"
-            })
-        
+    key = request.args.get("key", "").strip()
+    if not key or key != API_KEY:
+        return make_json_response({"ok": False, "error": "Invalid or missing API key."}, 401)
+    
+    num = request.args.get("num", "").strip()
+    adhar = request.args.get("adhar", "").strip()
+    email = request.args.get("email", "").strip()
+    
+    provided = [p for p in [num, adhar, email] if p]
+    if len(provided) == 0:
+        return make_json_response({"ok": False, "error": "Provide num OR adhar OR email"}, 400)
+    if len(provided) > 1:
+        return make_json_response({"ok": False, "error": "Only one parameter at a time"}, 400)
+    
+    # Validate & normalize
+    if num:
+        query, err = validate_num(num)
+        search_type = "num"
+    elif adhar:
+        query, err = validate_adhar(adhar)
+        search_type = "adhar"
+    else:
+        query, err = validate_email(email)
+        search_type = "email"
+    
+    if err:
+        return make_json_response({"ok": False, "error": err}, 400)
+    
+    # Store in context
+    g.search_type = search_type
+    g.query = query
+    
+    cost_est = estimate_cost()
+    logging.info(f"[FETCH] type={search_type} raw='{provided[0]}' normalized='{query}' cost=${cost_est}")
+    
+    try:
+        upstream = call_leakosint(query)
+    except Exception as e:
+        logging.exception("Upstream failed")
+        return make_json_response({"ok": False, "error": "Service unavailable"}, 502)
+    
+    if "Error code" in upstream:
+        return make_json_response({"ok": False, "error": upstream["Error code"]}, 502)
+    
+    # FILTERED RESULTS
+    results = build_results(upstream, search_type, query)
+    
+    # ✅ NOT FOUND CHECK - SIMPLE RESPONSE
+    if not results:
         return make_json_response({
             "ok": True,
             "type": search_type,
             "query_raw": provided[0],
             "query_normalized": query,
-            "limit_used": LIMIT,
-            "estimated_cost_usd": cost_est,
-            "total_databases": len(results),
-            "total_records": sum(db.get("count", 0) for db in results.values()),
-            "results": results
+            "message": "not found"
         })
-        
-    except Exception as e:
-        logging.exception("Fetch endpoint crashed")
-        return make_json_response({"ok": False, "error": "Internal error"}, 500)
+    
+    return make_json_response({
+        "ok": True,
+        "type": search_type,
+        "query_raw": provided[0],
+        "query_normalized": query,
+        "limit_used": LIMIT,
+        "estimated_cost_usd": cost_est,
+        "total_databases": len(results),
+        "total_records": sum(db.get("count", 0) for db in results.values()),
+        "results": results
+    })
 
 @app.route("/", methods=["GET"])
 def index():
     return make_json_response({
-        "service": "LeakOsint API Wrapper v2.2 ✅ FIXED",
+        "service": "LeakOsint API Wrapper v2.1 ✅",
         "developer": SOURCE_NAME,
-        "status": "✅ NO CRASH + 0-9 Numbers + Full Error Handling",
+        "status": "FIXED - No Cross Results + Not Found",
         "examples": {
-            "phone": f"/fetch?key={API_KEY}&num=7459918950",  # ✅ Now works!
+            "phone": f"/fetch?key={API_KEY}&num=9876543210",
             "adhar": f"/fetch?key={API_KEY}&adhar=123456789012", 
             "email": f"/fetch?key={API_KEY}&email=test@gmail.com"
+        },
+        "responses": {
+            "found": "Full results with databases",
+            "not_found": '{"ok":true,"type":"num","query_raw":"...","query_normalized":"...","message":"not found"}'
         }
     })
 
