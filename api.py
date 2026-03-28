@@ -47,7 +47,14 @@ def normalize_phone(raw: str) -> str:
         return "91" + clean            # add 91
     if re.match(r"^0[6-9]\d{9}$", clean):
         return "91" + clean[1:]        # replace 0 with 91
-    return clean                       # return as-is (international etc.)
+    return clean
+
+def is_valid_phone(normalized: str) -> bool:
+    """
+    Valid phone = exactly 12 digits, starts with 91[6-9]
+    Rejects aadhaar (which starts with 91[0-5] or other digits)
+    """
+    return bool(re.match(r"^91[6-9]\d{9}$", normalized))
 
 def normalize_adhar(raw: str) -> str:
     """Keep only digits, must be 12."""
@@ -93,12 +100,10 @@ def fetch():
         query      = normalize_phone(num)
         search_type = "num"
 
-        # Validate after normalization
-        if not re.match(r"^\d{10,13}$", query):
-            return make_json_response({
-                "ok": False,
-                "error": f"Invalid phone number: '{num}'. Use 10-digit Indian mobile number."
-            }, 400)
+        # Strict validation — rejects 12-digit aadhaar in num field
+        valid, err_msg = is_valid_phone(num, query)
+        if not valid:
+            return make_json_response({"ok": False, "error": err_msg}, 400)
 
     # ── Aadhaar ──
     else:
