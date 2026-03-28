@@ -51,14 +51,40 @@ def call_leakosint(query):
     resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
     return resp.json()
 
-def build_results(upstream):
+def build_results(upstream, search_type, query):
+    """
+    Build results but only include data that actually matches the search query
+    """
     results = {}
-    if "List" in upstream:
-        for db_name, db_data in upstream["List"].items():
+    
+    if "List" not in upstream:
+        return results
+    
+    for db_name, db_data in upstream["List"].items():
+        filtered_data = []
+        
+        # Get all data entries for this database
+        data_entries = db_data.get("Data", [])
+        
+        # Filter entries that contain the search query
+        for entry in data_entries:
+            # Convert entry to string for case-insensitive search
+            entry_str = str(entry).lower()
+            query_str = str(query).lower()
+            
+            # Check if query exists in this entry
+            if query_str in entry_str:
+                filtered_data.append(entry)
+        
+        # Only add database if it has matching data
+        if filtered_data:
             results[db_name] = {
                 "info": db_data.get("InfoLeak", ""),
-                "data": db_data.get("Data", [])
+                "data": filtered_data,
+                "total_found": len(filtered_data),
+                "total_in_db": len(data_entries)
             }
+    
     return results
 
 @app.route("/fetch", methods=["GET"])
@@ -74,17 +100,17 @@ def fetch():
     provided = [p for p in [num, adhar, email] if p]
 
     if len(provided) == 0:
-        return make_json_response({"ok": False, "error": "Format not supported"}, 400)
+        return make_json_response({"ok": False, "error": "No search parameter provided. Use num, adhar, or email."}, 400)
 
     if len(provided) > 1:
-        return make_json_response({"ok": False, "error": "Format not supported"}, 400)
+        return make_json_response({"ok": False, "error": "Only one search parameter allowed at a time."}, 400)
 
     if num:
         query, err = validate_num(num)
-        search_type = "num"
+        search_type = "phone"
     elif adhar:
         query, err = validate_adhar(adhar)
-        search_type = "adhar"
+        search_type = "aadhaar"
     else:
         query, err = validate_email(email)
         search_type = "email"
@@ -104,7 +130,11 @@ def fetch():
     if "Error code" in upstream:
         return make_json_response({"ok": False, "error": upstream["Error code"]}, 502)
 
-    results = build_results(upstream)
+    # Build filtered results
+    results = build_results(upstream, search_type, query)
+    
+    # Calculate total matches across all databases
+    total_matches = sum(db.get("total_found", 0) for db in results.values())
 
     return make_json_response({
         "ok":                 True,
@@ -114,6 +144,7 @@ def fetch():
         "limit_used":         LIMIT,
         "estimated_cost_usd": cost_est,
         "total_databases":    len(results),
+        "total_matches":      total_matches,
         "results":            results
     })
 
@@ -122,9 +153,11 @@ def index():
     return make_json_response({
         "service":   "LeakOsint API Wrapper",
         "developer": SOURCE_NAME,
+        "version":   "2.0",
+        "features":  "Filtered search results - only shows records matching your query",
         "examples": {
             "phone": f"/fetch?key={API_KEY}&num=9876543210",
-            "adhar": f"/fetch?key={API_KEY}&adhar=123456789012",
+            "aadhaar": f"/fetch?key={API_KEY}&adhar=123456789012",
             "email": f"/fetch?key={API_KEY}&email=test@gmail.com"
         }
     })
