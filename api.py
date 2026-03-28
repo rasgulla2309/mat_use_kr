@@ -1,13 +1,15 @@
 from flask import Flask, request, Response, g
 import requests, json, logging, re, math
+import os
 
 app = Flask(__name__)
 
 logging.basicConfig(level=logging.INFO)
 
 # === CONFIG ===
-API_KEY = "TU_NHI_MANEGA"
-LEAKOSINT_TOKEN = "8393353246:2MBq29zI"
+# Environment variables use karo for security
+API_KEY = os.environ.get("API_KEY", "TU_NHI_MANEGA")
+LEAKOSINT_TOKEN = os.environ.get("LEAKOSINT_TOKEN", "8393353246:2MBq29zI")
 TARGET_URL = "https://leakosintapi.com/"
 SOURCE_NAME = "@your_father"
 REQUEST_TIMEOUT = 30
@@ -42,9 +44,13 @@ def estimate_cost():
     return round(0.0002 * (5 + math.sqrt(LIMIT * 1)), 5)
 
 def call_leakosint(query):
-    data = {"token": LEAKOSINT_TOKEN, "request": query, "limit": LIMIT, "lang": "en"}
-    resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
-    return resp.json()
+    try:
+        data = {"token": LEAKOSINT_TOKEN, "request": query, "limit": LIMIT, "lang": "en"}
+        resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
+        return resp.json()
+    except Exception as e:
+        logging.error(f"Leakosint API call failed: {str(e)}")
+        return {"Error code": "Service unavailable"}
 
 def build_results(upstream, search_type, query):
     """Filter results based on search type - NO CROSS RESULTS"""
@@ -71,8 +77,8 @@ def build_results(upstream, search_type, query):
             record_str = str(record).lower()
             
             if search_type == "num":
-                if (re.search(r'\b91[6-9]\d{9}\b', record_str) or 
-                    re.search(r'\b[6-9]\d{9}\b', record_str) or
+                if (re.search(r'\b91[0-9]\d{9}\b', record_str) or 
+                    re.search(r'\b[0-9]\d{9}\b', record_str) or
                     query_lower in record_str):
                     filtered_data.append(record)
                     
@@ -101,74 +107,74 @@ def before_request():
 
 @app.route("/fetch", methods=["GET"])
 def fetch():
-    key = request.args.get("key", "").strip()
-    if not key or key != API_KEY:
-        return make_json_response({"ok": False, "error": "Invalid or missing API key."}, 401)
-    
-    num = request.args.get("num", "").strip()
-    adhar = request.args.get("adhar", "").strip()
-    email = request.args.get("email", "").strip()
-    
-    provided = [p for p in [num, adhar, email] if p]
-    if len(provided) == 0:
-        return make_json_response({"ok": False, "error": "Provide num OR adhar OR email"}, 400)
-    if len(provided) > 1:
-        return make_json_response({"ok": False, "error": "Only one parameter at a time"}, 400)
-    
-    # Validate & normalize
-    if num:
-        query, err = validate_num(num)
-        search_type = "num"
-    elif adhar:
-        query, err = validate_adhar(adhar)
-        search_type = "adhar"
-    else:
-        query, err = validate_email(email)
-        search_type = "email"
-    
-    if err:
-        return make_json_response({"ok": False, "error": err}, 400)
-    
-    # Store in context
-    g.search_type = search_type
-    g.query = query
-    
-    cost_est = estimate_cost()
-    logging.info(f"[FETCH] type={search_type} raw='{provided[0]}' normalized='{query}' cost=${cost_est}")
-    
     try:
+        key = request.args.get("key", "").strip()
+        if not key or key != API_KEY:
+            return make_json_response({"ok": False, "error": "Invalid or missing API key."}, 401)
+        
+        num = request.args.get("num", "").strip()
+        adhar = request.args.get("adhar", "").strip()
+        email = request.args.get("email", "").strip()
+        
+        provided = [p for p in [num, adhar, email] if p]
+        if len(provided) == 0:
+            return make_json_response({"ok": False, "error": "Provide num OR adhar OR email"}, 400)
+        if len(provided) > 1:
+            return make_json_response({"ok": False, "error": "Only one parameter at a time"}, 400)
+        
+        # Validate & normalize
+        if num:
+            query, err = validate_num(num)
+            search_type = "num"
+        elif adhar:
+            query, err = validate_adhar(adhar)
+            search_type = "adhar"
+        else:
+            query, err = validate_email(email)
+            search_type = "email"
+        
+        if err:
+            return make_json_response({"ok": False, "error": err}, 400)
+        
+        # Store in context
+        g.search_type = search_type
+        g.query = query
+        
+        cost_est = estimate_cost()
+        logging.info(f"[FETCH] type={search_type} raw='{provided[0]}' normalized='{query}' cost=${cost_est}")
+        
         upstream = call_leakosint(query)
-    except Exception as e:
-        logging.exception("Upstream failed")
-        return make_json_response({"ok": False, "error": "Service unavailable"}, 502)
-    
-    if "Error code" in upstream:
-        return make_json_response({"ok": False, "error": upstream["Error code"]}, 502)
-    
-    # FILTERED RESULTS
-    results = build_results(upstream, search_type, query)
-    
-    # ✅ NOT FOUND CHECK - SIMPLE RESPONSE
-    if not results:
+        
+        if "Error code" in upstream:
+            return make_json_response({"ok": False, "error": upstream["Error code"]}, 502)
+        
+        # FILTERED RESULTS
+        results = build_results(upstream, search_type, query)
+        
+        # NOT FOUND CHECK
+        if not results:
+            return make_json_response({
+                "ok": True,
+                "type": search_type,
+                "query_raw": provided[0],
+                "query_normalized": query,
+                "message": "not found"
+            })
+        
         return make_json_response({
             "ok": True,
             "type": search_type,
             "query_raw": provided[0],
             "query_normalized": query,
-            "message": "not found"
+            "limit_used": LIMIT,
+            "estimated_cost_usd": cost_est,
+            "total_databases": len(results),
+            "total_records": sum(db.get("count", 0) for db in results.values()),
+            "results": results
         })
-    
-    return make_json_response({
-        "ok": True,
-        "type": search_type,
-        "query_raw": provided[0],
-        "query_normalized": query,
-        "limit_used": LIMIT,
-        "estimated_cost_usd": cost_est,
-        "total_databases": len(results),
-        "total_records": sum(db.get("count", 0) for db in results.values()),
-        "results": results
-    })
+    except Exception as e:
+        logging.error(f"Error in fetch: {str(e)}")
+        return make_json_response({"ok": False, "error": f"Internal error: {str(e)}"}, 500)
 
 @app.route("/", methods=["GET"])
 def index():
@@ -187,8 +193,5 @@ def index():
         }
     })
 
-# Vercel ke liye yeh line important hai
-app = app
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+# This is the important part for Vercel
+# Vercel will look for 'app' variable
