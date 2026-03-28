@@ -1,20 +1,3 @@
-''' ✅ PHONE:
-GET /fetch?key=TU_NHI_MANEGA&num=9876543210
-→ {"ok":true,"type":"num",...}
-
-✅ AADHAR:
-GET /fetch?key=TU_NHI_MANEGA&adhar=123456789012  
-→ {"ok":true,"type":"adhar",...}
-
-✅ EMAIL:
-GET /fetch?key=TU_NHI_MANEGA&email=test@gmail.com
-→ {"ok":true,"type":"email",...}
-
-✅ NOT FOUND:
-→ {"ok":true,"message":"not found"}
-
-✅ INVALID:
-→ {"ok":false,"error":"Format not supported"}'''
 
 from flask import Flask, request, Response, g
 import requests, json, logging, re, math
