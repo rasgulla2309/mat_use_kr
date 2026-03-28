@@ -10,10 +10,10 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # === CONFIG ===
-API_KEY = "yourkey123"          # Change this to your custom API key
-LEAKOSINT_TOKEN = "YOUR_LEAKOSINT_TOKEN_HERE"  # Token from /api command in bot
+API_KEY = "TU_NHI_MANEGA"          # Change this to your custom API key
+LEAKOSINT_TOKEN = "987654321:b42vAQjW"  # Token from /api command in bot
 TARGET_URL = "https://leakosintapi.com/"
-SOURCE_NAME = "@YourUsername"   # Your name/username
+SOURCE_NAME = "@your_father"   # Your name/username
 REQUEST_TIMEOUT = 30
 # ==============
 
