@@ -1,5 +1,6 @@
 from flask import Flask, request, Response, g
 import requests, json, logging, re, math
+
 app = Flask(__name__)
 
 logging.basicConfig(level=logging.INFO)
@@ -185,6 +186,9 @@ def index():
             "not_found": '{"ok":true,"type":"num","query_raw":"...","query_normalized":"...","message":"not found"}'
         }
     })
+
+# Vercel ke liye yeh line important hai
+app = app
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
