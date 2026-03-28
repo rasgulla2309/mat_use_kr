@@ -1,8 +1,8 @@
 """
 LeakOsint API Wrapper
-Endpoints:
-  GET /fetch?key=<KEY>&num=<phone>     → Phone number search (auto 91 prefix)
-  GET /fetch?key=<KEY>&adhar=<number>  → Aadhaar search
+  GET /fetch?key=<KEY>&num=<phone>     → exactly 10 digit (91 auto-added)
+  GET /fetch?key=<KEY>&adhar=<number>  → exactly 12 digit (any starting digits)
+  GET /fetch?key=<KEY>&email=<email>   → valid email
 """
 from flask import Flask, request, Response
 import requests, json, logging, re, math
@@ -11,56 +11,47 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # === CONFIG ===
-API_KEY         = "TU_NHI_MANEGA"          # Apna custom key
-LEAKOSINT_TOKEN = "8393353246:2MBq29zI"    # /api command se mila token
+API_KEY         = "TU_NHI_MANEGA"
+LEAKOSINT_TOKEN = "8393353246:2MBq29zI"
 TARGET_URL      = "https://leakosintapi.com/"
 SOURCE_NAME     = "@your_father"
 REQUEST_TIMEOUT = 30
-LIMIT           = 100                       # Fixed limit (minimum & enough for exact match)
+LIMIT           = 100
 # ==============
+
+def validate_num(raw):
+    clean = re.sub(r"[\s\-\.\(\)\+]", "", raw)
+    if re.match(r"^[6-9]\d{9}$", clean):
+        return "91" + clean, None
+    return None, "Format not supported"
+
+def validate_adhar(raw):
+    clean = re.sub(r"\D", "", raw)
+    if re.match(r"^\d{12}$", clean):
+        return clean, None
+    return None, "Format not supported"
+
+def validate_email(raw):
+    s = raw.strip()
+    if re.match(r"^[\w.+\-]+@[\w\-]+\.[a-zA-Z]{2,}$", s):
+        return s.lower(), None
+    return None, "Format not supported"
 
 def make_json_response(payload, status=200):
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    return Response(body, status=status, mimetype="application/json; charset=utf-8",
+    return Response(body, status=status,
+                    mimetype="application/json; charset=utf-8",
                     headers={"X-Source-Developer": SOURCE_NAME})
 
-def estimate_cost(limit: int) -> float:
-    # Single word / exact match → complexity = 1
-    return round(0.0002 * (5 + math.sqrt(limit * 1)), 5)
+def estimate_cost():
+    return round(0.0002 * (5 + math.sqrt(LIMIT * 1)), 5)
 
-def call_leakosint(query: str) -> dict:
-    data = {
-        "token":   LEAKOSINT_TOKEN,
-        "request": query,
-        "limit":   LIMIT,
-        "lang":    "en"
-    }
+def call_leakosint(query):
+    data = {"token": LEAKOSINT_TOKEN, "request": query, "limit": LIMIT, "lang": "en"}
     resp = requests.post(TARGET_URL, json=data, timeout=REQUEST_TIMEOUT)
     return resp.json()
 
-def normalize_phone(raw: str) -> str:
-    """Remove junk, add 91 prefix if missing."""
-    clean = re.sub(r"[\s\-\.\(\)\+]", "", raw)
-    if re.match(r"^91[6-9]\d{9}$", clean):
-        return clean                   # already has 91
-    if re.match(r"^[6-9]\d{9}$", clean):
-        return "91" + clean            # add 91
-    if re.match(r"^0[6-9]\d{9}$", clean):
-        return "91" + clean[1:]        # replace 0 with 91
-    return clean
-
-def is_valid_phone(normalized: str) -> bool:
-    """
-    Valid phone = exactly 12 digits, starts with 91[6-9]
-    Rejects aadhaar (which starts with 91[0-5] or other digits)
-    """
-    return bool(re.match(r"^91[6-9]\d{9}$", normalized))
-
-def normalize_adhar(raw: str) -> str:
-    """Keep only digits, must be 12."""
-    return re.sub(r"\D", "", raw)
-
-def build_results(upstream: dict) -> dict:
+def build_results(upstream):
     results = {}
     if "List" in upstream:
         for db_name, db_data in upstream["List"].items():
@@ -70,56 +61,40 @@ def build_results(upstream: dict) -> dict:
             }
     return results
 
-# ─── Main endpoint ────────────────────────────────────────────────────────────
 @app.route("/fetch", methods=["GET"])
 def fetch():
-    # Auth
     key = request.args.get("key", "").strip()
     if not key or key != API_KEY:
         return make_json_response({"ok": False, "error": "Invalid or missing API key."}, 401)
 
     num   = request.args.get("num",   "").strip()
     adhar = request.args.get("adhar", "").strip()
+    email = request.args.get("email", "").strip()
 
-    # Must provide exactly one
-    if not num and not adhar:
-        return make_json_response({
-            "ok": False,
-            "error": "Provide either ?num=<phone> or ?adhar=<aadhaar>",
-            "examples": {
-                "phone": "/fetch?key=YOUR_KEY&num=9876543210",
-                "adhar": "/fetch?key=YOUR_KEY&adhar=123456789012"
-            }
-        }, 400)
+    provided = [p for p in [num, adhar, email] if p]
 
-    if num and adhar:
-        return make_json_response({"ok": False, "error": "Use only one: num OR adhar, not both."}, 400)
+    if len(provided) == 0:
+        return make_json_response({"ok": False, "error": "Format not supported"}, 400)
 
-    # ── Phone ──
+    if len(provided) > 1:
+        return make_json_response({"ok": False, "error": "Format not supported"}, 400)
+
     if num:
-        query      = normalize_phone(num)
+        query, err = validate_num(num)
         search_type = "num"
-
-        # Strict validation — rejects 12-digit aadhaar in num field
-        valid, err_msg = is_valid_phone(num, query)
-        if not valid:
-            return make_json_response({"ok": False, "error": err_msg}, 400)
-
-    # ── Aadhaar ──
-    else:
-        query      = normalize_adhar(adhar)
+    elif adhar:
+        query, err = validate_adhar(adhar)
         search_type = "adhar"
+    else:
+        query, err = validate_email(email)
+        search_type = "email"
 
-        if not re.match(r"^\d{12}$", query):
-            return make_json_response({
-                "ok": False,
-                "error": f"Invalid Aadhaar: '{adhar}'. Must be exactly 12 digits."
-            }, 400)
+    if err:
+        return make_json_response({"ok": False, "error": err}, 400)
 
-    cost_est = estimate_cost(LIMIT)
-    logging.info(f"[FETCH] type={search_type} raw='{num or adhar}' normalized='{query}' est_cost=${cost_est}")
+    cost_est = estimate_cost()
+    logging.info(f"[FETCH] type={search_type} raw='{provided[0]}' normalized='{query}' cost=${cost_est}")
 
-    # Call LeakOsint
     try:
         upstream = call_leakosint(query)
     except Exception as e:
@@ -134,7 +109,7 @@ def fetch():
     return make_json_response({
         "ok":                 True,
         "type":               search_type,
-        "query_raw":          num or adhar,
+        "query_raw":          provided[0],
         "query_normalized":   query,
         "limit_used":         LIMIT,
         "estimated_cost_usd": cost_est,
@@ -142,29 +117,17 @@ def fetch():
         "results":            results
     })
 
-
-# ─── Info endpoint ────────────────────────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def index():
     return make_json_response({
-        "service": "LeakOsint API Wrapper",
+        "service":   "LeakOsint API Wrapper",
         "developer": SOURCE_NAME,
-        "endpoints": {
-            "/fetch": {
-                "method": "GET",
-                "params": {
-                    "key":   "Your API key (required)",
-                    "num":   "Phone number — 10 digit, 91 auto-added (use this OR adhar)",
-                    "adhar": "Aadhaar number — 12 digit (use this OR num)"
-                },
-                "examples": {
-                    "phone": "/fetch?key=TU_NHI_MANEGA&num=9876543210",
-                    "adhar": "/fetch?key=TU_NHI_MANEGA&adhar=123456789012"
-                }
-            }
+        "examples": {
+            "phone": f"/fetch?key={API_KEY}&num=9876543210",
+            "adhar": f"/fetch?key={API_KEY}&adhar=123456789012",
+            "email": f"/fetch?key={API_KEY}&email=test@gmail.com"
         }
     })
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
