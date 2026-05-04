@@ -156,9 +156,7 @@ def index():
         "version":   "2.0",
         "features":  "Filtered search results - only shows records matching your query",
         "examples": {
-            "phone": f"/fetch?key={API_KEY}&num=9876543210",
-            "aadhaar": f"/fetch?key={API_KEY}&adhar=123456789012",
-            "email": f"/fetch?key={API_KEY}&email=test@gmail.com"
+            "phone": f"/fetch?key={API_KEY}&num=9876543210"
         }
     })
 
